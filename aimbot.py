@@ -278,6 +278,29 @@ class Aimbot:
         self._acc_x = 0.0
         self._acc_y = 0.0
 
+    def set_view_angles(self, yaw, pitch):
+        yaw = ((yaw % 360.0) + 180.0) % 360.0 - 180.0
+        pitch = max(-89.0, min(89.0, pitch))
+
+        try:
+            ptr = self.mem.read_pointer(self.client + self.off.dwViewAngles)
+            if ptr and ptr >= 0x10000:
+                for off in (0x1C, 0x4C8, 0x570):
+                    self.mem.write_float(ptr + off, pitch)
+                    self.mem.write_float(ptr + off + 4, yaw)
+        except OSError:
+            pass
+
+        try:
+            pawn = self.mem.read_pointer(self.client + self.off.dwLocalPlayerPawn)
+            if pawn and self.off.m_angEyeAngles:
+                base = pawn + self.off.m_angEyeAngles
+                self.mem.write_float(base, pitch)
+                self.mem.write_float(base + 4, yaw)
+        except OSError:
+            pass
+        return True
+
     def aim_at_360(self, eye_pos, target_pos, smooth=1.0):
         if not is_game_foreground():
             return False
@@ -287,37 +310,40 @@ class Aimbot:
         dz = target_pos[2] - eye_pos[2]
 
         horiz = math.hypot(dx, dy)
+        if horiz < 1.0:
+            return False
+
         target_yaw = math.degrees(math.atan2(dy, dx)) % 360.0
         target_pitch = -math.degrees(math.atan2(dz, horiz))
 
-        cur_yaw, cur_pitch = self._read_view_angles()
+        cur = self._read_view_angles()
+        if cur is None:
+            return False
+        cur_yaw, cur_pitch = cur
 
         d_yaw = (target_yaw - cur_yaw + 180) % 360 - 180
         d_pitch = target_pitch - cur_pitch
 
-        sens = self._sensitivity()
-        m_yaw = 0.022
+        # smooth: 1.0 — мгновенно, >1 — плавно
+        if smooth > 1.0:
+            d_yaw /= smooth
+            d_pitch /= smooth
 
-        # Переводим углы в движение мыши.
-        # Знак yaw инвертирован: в CS2 положительный yaw = влево, а MoveInput dx > 0 = вправо.
-        move_x = -d_yaw / (m_yaw * sens) / smooth
-        move_y = d_pitch / (m_yaw * sens) / smooth
+        new_yaw = (cur_yaw + d_yaw) % 360.0
+        new_pitch = max(-89.0, min(89.0, cur_pitch + d_pitch))
 
-        _send_move(move_x, move_y)
+        self.set_view_angles(new_yaw, new_pitch)
         return True
 
     def _read_view_angles(self):
-        """Читает текущие углы из dwViewAngles."""
         try:
             ptr = self.mem.read_pointer(self.client + self.off.dwViewAngles)
-            if not ptr:
-                return (0.0, 0.0)
-            yaw = self.mem.read_float(ptr)
-            pitch = self.mem.read_float(ptr + 4)
-            if not (-720 <= yaw <= 720):
-                yaw = 0.0
-            if not (-180 <= pitch <= 180):
-                pitch = 0.0
-            return (yaw % 360.0, pitch)
+            if not ptr or ptr < 0x10000:
+                return None
+            pitch = self.mem.read_float(ptr + 0x1C)
+            yaw   = self.mem.read_float(ptr + 0x20)
+            if not (-89.5 <= pitch <= 89.5 and -180.5 <= yaw <= 180.5):
+                return None
+            return yaw % 360.0, pitch
         except OSError:
-            return (0.0, 0.0)
+            return None
