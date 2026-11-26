@@ -152,3 +152,9 @@ A / D	Auto Strafe (hold to strafe)
 📜 License
 
 This project is licensed under the MIT License — see the LICENSE file for details.
+
+🙏 Credits
+
+    ArbuzianChelik — author and maintainer.
+
+    Inspired by various open-source CS2 external cheats and the HvH community.
