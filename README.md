@@ -138,3 +138,17 @@ A / D	Auto Strafe (hold to strafe)
     Input emulation — SendInput is used to move the mouse (aimbot, silent aim, autostrafe) and press keys (bhop, strafe).
 
     Note: The cheat is external — it does not inject into the game process. All memory reads/writes go through the Windows API.
+
+🧪 Known Limitations
+
+    VAC — not bypassed. Use only on local servers.
+
+    Performance — Python + Tkinter overlay is not as fast as C++ internals; expect ~60–120 FPS overlay.
+
+    Offsets — may break after CS2 updates. The offset dumper should re-scan patterns automatically, but if patterns change, the cheat will not work until offsets are updated.
+
+    Autostrafe — key-based strafe works on any server; velocity-based “rage” autostrafe requires sv_airaccelerate > 12 on the server to reach high speeds.
+
+📜 License
+
+This project is licensed under the MIT License — see the LICENSE file for details.
