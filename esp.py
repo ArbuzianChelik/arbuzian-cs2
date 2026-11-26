@@ -291,6 +291,7 @@ class ESP:
                     self._apply_radar(pawn)
 
                 self.entities.append({
+                    "addr": pawn,
                     "pos": pos, "head_pos": head_pos,
                     "screen": s, "head_screen": hs,
                     "bones": bones, "bone_screens": bone_screens,

@@ -2,6 +2,7 @@ import ctypes
 import math
 import time
 import tkinter as tk
+from glow import GlowController
 
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -64,21 +65,20 @@ def darken_hex(hex_color, factor=0.5):
     return f"#{int(r*factor):02X}{int(g*factor):02X}{int(b*factor):02X}"
 
 
+VIEW_ANGLES_QANGLE_OFFSET = 0x1C   # продублируй константу или импортни из silent_aim
+
 def read_view_angles(mem, offset):
     try:
         ptr = mem.read_pointer(mem.client_base + offset.dwViewAngles)
-        if not ptr:
+        if not ptr or ptr < 0x10000:
             return (0.0, 0.0)
-        yaw = mem.read_float(ptr)
-        pitch = mem.read_float(ptr + 4)
-        if not (-720 <= yaw <= 720):
-            yaw = 0.0
-        if not (-180 <= pitch <= 180):
-            pitch = 0.0
+        pitch = mem.read_float(ptr + VIEW_ANGLES_QANGLE_OFFSET)
+        yaw   = mem.read_float(ptr + VIEW_ANGLES_QANGLE_OFFSET + 4)
+        if not (-89.5 <= pitch <= 89.5 and -180.5 <= yaw <= 180.5):
+            return (0.0, 0.0)
         return (yaw % 360.0, pitch)
     except OSError:
         return (0.0, 0.0)
-
 
 def wait_for_process(name="cs2.exe", delay=2.0):
     print(f"[*] Ожидание {name}...")
@@ -116,12 +116,26 @@ def main():
     spinbot = Spinbot(mem, offset)
     bhop = Bhop(mem, offset)
     rcs = RecoilControl(mem, offset)
+    glow = GlowController(mem, offset)
     overlay = Overlay()
+
+    # ── временная диагностика m_angEyeAngles ──
+    from offsets import DumpSchemas
+    schema_buf = mem.read(mem.schemasystem_base,
+                        mem.get_module_size(mem.schemasystem_base))
+    diag_schemas = DumpSchemas(mem, mem.schemasystem_base,
+                                mem.get_module_size(mem.schemasystem_base))
+    print("[diag] ищу eye-angle поля:")
+    for cls, fields in diag_schemas.items():
+        for fname, foff in fields.items():
+            low = fname.lower()
+            if ("eyeangle" in low or "angEye" in fname
+                    or "viewoffset" in low and "angle" in low):
+                print(f"    {cls}.{fname} = 0x{foff:X}")
 
     config = {
         # ── AIMBOT ──
         "Silent Aim": tk.BooleanVar(value=False),
-        "360 Aim": tk.BooleanVar(value=False),
         "Silent FOV": ("slider", tk.DoubleVar(value=10.0), 1.0, 180.0),
         "Silent Hold (ms)": ("slider", tk.DoubleVar(value=18.0), 5.0, 50.0),
         "Silent Visibility": tk.BooleanVar(value=True),
@@ -137,6 +151,7 @@ def main():
         "Aimbot Priority": ("combo", tk.StringVar(value="FOV"),
                              ["FOV", "Distance", "Lowest HP"]),
         "Aimbot Visibility": tk.BooleanVar(value=True),
+        "Aimbot 360": tk.BooleanVar(value=False),
 
         "RCS Strength": ("slider", tk.DoubleVar(value=1.0), 0.0, 1.0),
         "RCS Start Bullet": ("slider", tk.DoubleVar(value=1), 1, 30),
@@ -179,6 +194,7 @@ def main():
         "No Flash": tk.BooleanVar(value=False),
         "FOV Circle": tk.BooleanVar(value=True),
         "ESP Debug": tk.BooleanVar(value=True),
+        "ESP Glow": tk.BooleanVar(value=False),
     }
 
     cfg_mgr = ConfigManager(config, folder="configs", name="default")
@@ -216,6 +232,9 @@ def main():
         esp.skeleton_enabled = val(config, "ESP Skeleton")
         esp.enable_radar = val(config, "Radar Hack")
         esp.update()
+        glow.update(esp.entities,
+                    esp.local_team,
+                    val(config, "ESP Glow") and fg_ok)
 
         W, H = ov.width, ov.height
         aimbot.set_screen_aspect(W, H)
@@ -304,6 +323,12 @@ def main():
         aimbot.enabled = val(config, "Aimbot")
         smooth_aimed = aimbot.update(esp.entities, esp.local_pawn, W, H)
 
+        if val(config, "360 Aim") and esp.entities:
+            target = min(esp.entities,
+                         key=lambda e: math.dist(e["head_pos"], esp.local_eye))
+            aimbot.aim_at_360(esp.local_eye, target["head_pos"],
+                              smooth=1.0)   # 1.0 = мгновенно, без интерполяции
+
         # ── SILENT AIM ──
         silent_busy = silent.is_active()
         if val(config, "Silent Aim"):
@@ -313,48 +338,39 @@ def main():
             silent.rcs_strength = val(config, "RCS Strength")
             silent.rcs_start_bullet = int(val(config, "RCS Start Bullet"))
 
+            cur_yaw, cur_pitch = read_view_angles(mem, offset)
+            eye = esp.local_eye
             targets = []
-            if silent.use_360:
-                # World-angle дельты (работает для врагов ЗА спиной)
-                cur_yaw, cur_pitch = read_view_angles(mem, offset)
-                eye = esp.local_eye
-                for e in esp.entities:
-                    if silent.visible_only and not e.get("visible"):
-                        continue
-                    tx, ty, tz = e["head_pos"]
-                    dx_w = tx - eye[0]
-                    dy_w = ty - eye[1]
-                    dz_w = tz - eye[2]
-                    horiz = math.hypot(dx_w, dy_w)
-                    tgt_yaw = math.degrees(math.atan2(dy_w, dx_w)) % 360.0
-                    tgt_pitch = -math.degrees(math.atan2(dz_w, horiz))
 
-                    d_yaw = (tgt_yaw - cur_yaw + 180) % 360 - 180
-                    d_pitch = tgt_pitch - cur_pitch
+            for e in esp.entities:
+                if silent.visible_only and not e.get("visible"):
+                    continue
+                tx, ty, tz = e["head_pos"]
+                dx_w = tx - eye[0]
+                dy_w = ty - eye[1]
+                dz_w = tz - eye[2]
 
-                    # Приводим к конвенции: positive = aim right / down
-                    move_yaw = -d_yaw
-                    move_pitch = d_pitch
+                horiz = math.hypot(dx_w, dy_w)
+                if horiz < 1.0:
+                    continue
 
-                    dist = math.hypot(move_yaw, move_pitch)
-                    if dist <= 180.0:
-                        targets.append((move_yaw, move_pitch, dist))
-            else:
-                # Screen-projection (для FOV ≤ 90°, точнее)
-                fov_limit = silent.fov
-                for e in esp.entities:
-                    if silent.visible_only and not e.get("visible"):
-                        continue
-                    yaw, pitch, dist = aimbot.angle_to(W, H, e["head_screen"])
-                    if dist <= fov_limit:
-                        targets.append((yaw, pitch, dist))
+                tgt_yaw = math.degrees(math.atan2(dy_w, dx_w)) % 360.0
+                tgt_pitch = -math.degrees(math.atan2(dz_w, horiz))
 
-            sens = aimbot._sensitivity()
+                # приводим к [-180, 180] для корректного сравнения
+                d_yaw = (tgt_yaw - cur_yaw + 180) % 360 - 180
+                d_pitch = tgt_pitch - cur_pitch
+                dist = math.hypot(d_yaw, d_pitch)
+
+                limit = 180.0 if silent.use_360 else silent.fov
+                if dist <= limit:
+                    targets.append((tgt_yaw, tgt_pitch, dist))
+
             punch = aimbot._get_punch(esp.local_pawn)
             shots = aimbot._shots_fired(esp.local_pawn)
-            silent.publish(targets, sens, punch, shots, True, fg_ok)
+            silent.publish(targets, punch, shots, True, fg_ok)
         else:
-            silent.publish([], 2.0, (0.0, 0.0), 0, False, fg_ok)
+            silent.publish([], (0.0, 0.0), 0, False, fg_ok)
 
         # ── RCS ──
         if val(config, "Recoil Control") and not smooth_aimed and not silent_busy:

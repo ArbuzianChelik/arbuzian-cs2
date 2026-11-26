@@ -216,6 +216,10 @@ class Offset:
     m_flC4Blow: int
     m_bBombDefused: int
     m_angEyeAngles: int
+    m_Glow: int
+    m_iGlowType: int
+    m_glowColorOverride: int
+    m_bGlowing: int
 
 def GetOffsets(mem: Memory) -> Offset:
     client_base = mem.client_base
@@ -310,5 +314,9 @@ def GetOffsets(mem: Memory) -> Offset:
         m_vSmokeDetonationPos=lookup(schemas, "C_SmokeGrenadeProjectile", "m_vSmokeDetonationPos"),
         m_flC4Blow=lookup(schemas, "C_PlantedC4", "m_flC4Blow"),
         m_bBombDefused=lookup(schemas, "C_PlantedC4", "m_bBombDefused"),
-        m_angEyeAngles=lookup_opt(schemas, "C_CSPlayerPawnBase", "m_angEyeAngles[0]"),
+        m_angEyeAngles=lookup_opt(schemas, "C_CSPlayerPawn", "m_angEyeAngles"),
+        m_Glow=lookup_opt(schemas, "C_BaseModelEntity", "m_Glow"),
+        m_iGlowType=lookup_opt(schemas, "CGlowProperty", "m_iGlowType"),
+        m_glowColorOverride=lookup_opt(schemas, "CGlowProperty", "m_glowColorOverride"),
+        m_bGlowing=lookup_opt(schemas, "CGlowProperty", "m_bGlowing"),
     )

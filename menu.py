@@ -51,6 +51,7 @@ TABS = {
                            "ESP Name", "ESP Distance", "ESP Weapon", "ESP Tracer", "ESP Fill"],
             "OTHER ESP": ["Bomb ESP", "Radar Hack", "No Flash"],
             "OVERLAY": ["FOV Circle", "ESP Debug"],
+            "PLAYER GLOW": ["ESP Glow"],
         },
     },
 }
