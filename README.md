@@ -118,3 +118,23 @@ pip install customtkinter
         Save/Load configs with the buttons at the bottom.
 
     Exit — press END (emergency kill switch) or close the overlay window.
+
+⌨️ Default Hotkeys
+Key	Action
+INSERT	Toggle menu
+END	Emergency exit (kills the cheat)
+MOUSE4	Spinbot hotkey (if enabled)
+SPACE	Bhop (hold to jump)
+A / D	Auto Strafe (hold to strafe)
+
+⚙️ How It Works
+
+    Memory access — uses ctypes + ReadProcessMemory / WriteProcessMemory to read game state (player positions, health, bones, view angles, etc.).
+
+    Offsets — automatically dumped from client.dll and schemasystem.dll using pattern scanning.
+
+    Overlay — a transparent Tkinter window with WS_EX_LAYERED | WS_EX_TRANSPARENT that follows the CS2 window and draws ESP / FOV circle / debug info.
+
+    Input emulation — SendInput is used to move the mouse (aimbot, silent aim, autostrafe) and press keys (bhop, strafe).
+
+    Note: The cheat is external — it does not inject into the game process. All memory reads/writes go through the Windows API.
