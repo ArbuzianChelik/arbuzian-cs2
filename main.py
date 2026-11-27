@@ -407,18 +407,18 @@ def main():
             if not silent_busy and not smooth_aimed:
                 spin_hotkey = bool(user32.GetAsyncKeyState(VK_MOUSE4) & 0x8000)
                 hotkey_mode = val(config, "Spinbot Hotkey")
-                spinbot.desync_side = val(config, "Desync Side")
+
                 if val(config, "Spinbot"):
                     spinbot.mode = val(config, "Spinbot Mode")
                     spinbot.speed = val(config, "Spinbot Speed")
                     spinbot.jitter_range = val(config, "Jitter Range")
-                    spinbot.update(desync=False,
-                                    hotkey_held=(spin_hotkey if hotkey_mode else True))
+                    spinbot.update(hotkey_held=(spin_hotkey if hotkey_mode else True))
                     spinbot_active = True
                 elif val(config, "Desync"):
+                    # Если Desync вынесен в отдельный режим — используем spinbot в режиме Jitter
+                    spinbot.mode = "Jitter"
                     spinbot.jitter_range = val(config, "Jitter Range")
-                    spinbot.update(desync=True,
-                                    hotkey_held=(spin_hotkey if hotkey_mode else True))
+                    spinbot.update(hotkey_held=(spin_hotkey if hotkey_mode else True))
                     spinbot_active = True
 
             # ── BHOP ──

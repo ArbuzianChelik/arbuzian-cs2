@@ -51,8 +51,8 @@ class Spinbot:
         self._acc = 0.0
         self._jitter_dir = 1
 
-    def update(self, hotkey_held=True):
-        if not is_game_foreground() or not hotkey_held:
+    def update(self, hotkey_held=True, desync=False):
+        if not is_game_foreground() or (not hotkey_held and not desync):
             self._last = time.time()
             self._acc = 0.0
             return
@@ -63,18 +63,23 @@ class Spinbot:
         if dt <= 0:
             return
 
-        if self.mode == "Spin":
+        if desync:
+            self._do_desync(dt)
+        elif self.mode == "Spin":
             self._spin(dt)
         elif self.mode == "Jitter":
             self._jitter(dt)
         elif self.mode == "Random":
             self._random(dt)
-
-    def _spin(self, dt):
-        speed = min(self.speed, self.MAX_DEG_PER_SEC)
-        self._acc += (speed * dt) / (0.022 * self.sens)
-        counts = int(self._acc)
-        self._acc -= counts
+            
+    def _do_desync(self, dt):
+        self._acc += dt
+        if self._acc < 0.15:
+            return
+        self._acc = 0.0
+        # Просто рывок в сторону (как Jitter, но с фиксированной стороной)
+        deg = min(self.jitter_range, 60.0)
+        counts = int(deg / (0.022 * self.sens))
         if counts:
             self._send_split(counts)
 
