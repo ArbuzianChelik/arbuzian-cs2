@@ -13,7 +13,9 @@ This project is for educational purposes only.
     🚫 The author is not responsible for any bans or damage caused by using this software.
 
 By using this software you agree that you are solely responsible for your actions.
-✨ Features
+
+✨ Features:
+
 🎯 Aimbot
 
     Smooth Aimbot with adjustable FOV, smoothing, and humanization.
