@@ -391,10 +391,13 @@ class Menu:
                     card.pack(fill="x", padx=10, pady=3)
                     parent_card = card
                     child_container = ctk.CTkFrame(parent, fg_color="transparent")
-                    # Запоминаем контейнер и родительскую карточку
-                    self._children_frames[parent_key] = (child_container, parent_card)
+                    self._children_frames[parent_key] = (child_container, parent_card, [])
+                    if hasattr(v, "trace_add"):
+                        v.trace_add("write", lambda *_: self.refresh_visibility())
                 else:
                     card.pack(fill="x", padx=10, pady=3)
+                    if parent_key and child_container is not None:
+                        self._children_frames[parent_key][2].append(card)
 
     def _attach_tooltip(self, widget, key):
         if widget is not None:
@@ -458,7 +461,7 @@ class Menu:
         return card
 
     def refresh_visibility(self):
-        for parent_key, (container, parent_card) in self._children_frames.items():
+        for parent_key, (container, parent_card, child_cards) in self._children_frames.items():
             if parent_key not in self.config:
                 continue
             try:
@@ -466,12 +469,47 @@ class Menu:
             except Exception:
                 is_on = True
 
-            # Если включено — принудительно пакуем с отступом (after=parent_card)
-            # Если выключено — прячем контейнер целиком
-            if is_on:
-                container.pack(fill="x", padx=(30, 10), pady=(0, 5), after=parent_card)
-            else:
-                container.pack_forget()
+            container.pack(fill="x", padx=(30, 10), pady=(0, 5), after=parent_card)
+            for card in child_cards:
+                self._set_card_enabled(card, is_on)
+
+    def _set_card_enabled(self, card, enabled):
+        card.configure(fg_color="#0c1410" if enabled else "#080f08")
+        self._set_nested_widgets(card, enabled)
+
+    def _set_nested_widgets(self, parent, enabled):
+        for widget in parent.winfo_children():
+            if isinstance(widget, ctk.CTkSwitch):
+                widget.configure(
+                    state="normal" if enabled else "disabled",
+                    text_color=TEXT if enabled else SUBTEXT,
+                    progress_color=ACCENT if enabled else ACCENT_DIM,
+                    button_color="#2a3a2a" if enabled else "#1a241a",
+                    button_hover_color="#4a5a4a" if enabled else "#1a241a",
+                )
+            elif isinstance(widget, ctk.CTkSlider):
+                widget.configure(
+                    state="normal" if enabled else "disabled",
+                    progress_color=ACCENT if enabled else ACCENT_DIM,
+                    button_color=ACCENT if enabled else "#365036",
+                    button_hover_color=ACCENT_HOVER if enabled else "#365036",
+                )
+            elif isinstance(widget, ctk.CTkOptionMenu):
+                widget.configure(
+                    state="normal" if enabled else "disabled",
+                    text_color=TEXT if enabled else SUBTEXT,
+                    fg_color="#1a2a1a" if enabled else "#152016",
+                    button_color="#2a3a2a" if enabled else "#1e2e20",
+                    button_hover_color=ACCENT if enabled else "#1e2e20",
+                )
+            elif isinstance(widget, ctk.CTkLabel):
+                if not hasattr(widget, "_enabled_text_color"):
+                    widget._enabled_text_color = widget.cget("text_color")
+                widget.configure(
+                    text_color=widget._enabled_text_color if enabled else SUBTEXT
+                )
+            if widget.winfo_children():
+                self._set_nested_widgets(widget, enabled)
 
     def show(self):
         if self._visible or self._animating:
