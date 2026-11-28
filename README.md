@@ -103,7 +103,7 @@ pip install customtkinter
 
     Run the cheat:
     
-    python main.py
+    python loader.py
 
     Open the menu — press INSERT.
 
