@@ -2,13 +2,15 @@ import ctypes
 import math
 import time
 import tkinter as tk
+import os
+import sys
+import traceback
 
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
 except Exception:
     pass
 
-# Критично для точности silent aim: sleep(0.8ms) реально ~0.8ms, а не 15.6ms
 try:
     ctypes.windll.winmm.timeBeginPeriod(1)
     _TIMER_1MS = True
@@ -34,20 +36,29 @@ from menu import Menu
 from silent_aim import SilentAim
 from config_manager import ConfigManager
 
+# ================= ЛОГИРОВАНИЕ =================
+LOG_FILE = "logs.txt"
+
+def log(msg):
+    print(msg)
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
+    except Exception:
+        pass
+
+# ================================================
 
 def val(cfg, key):
     v = cfg[key]
     return v[1].get() if isinstance(v, tuple) else v.get()
 
-
 def health_color(hp):
     p = max(0.0, min(1.0, hp / 100.0))
     return f"#{int(255 * min(1.0, 2 - 2 * p)):02X}{int(255 * min(1.0, 2 * p)):02X}50"
 
-
 def team_color(team):
     return {2: "#ffb84d", 3: "#4a9eff"}.get(team, "#cccccc")
-
 
 def darken_hex(hex_color, factor=0.5):
     h = hex_color.lstrip("#")
@@ -60,7 +71,6 @@ def darken_hex(hex_color, factor=0.5):
     except ValueError:
         return hex_color
     return f"#{int(r*factor):02X}{int(g*factor):02X}{int(b*factor):02X}"
-
 
 def read_view_angles(mem, offset):
     try:
@@ -77,36 +87,34 @@ def read_view_angles(mem, offset):
     except OSError:
         return (0.0, 0.0)
 
-
 def wait_for_process(name="cs2.exe", delay=2.0):
-    print(f"[*] Ожидание {name}...")
+    log(f"[*] Ожидание {name}...")
     while True:
         try:
             mem = Memory(name)
-            print(f"[+] PID {mem.pid}, client @ 0x{mem.client_base:X}")
+            log(f"[+] PID {mem.pid}, client @ 0x{mem.client_base:X}")
             return mem
         except RuntimeError:
             time.sleep(delay)
 
-
 def wait_for_offsets(mem, delay=1.0):
-    print("[*] Оффсеты...")
+    log("[*] Оффсеты...")
     while True:
         try:
             off = GetOffsets(mem)
-            print("[+] Offsets OK")
+            log("[+] Offsets OK")
             return off
         except Exception as e:
-            print(f"[!] {e}, retry...")
+            log(f"[!] {e}, retry...")
             time.sleep(delay)
 
-
 def main():
-    print("[*] ARBUZIAN CS2 — External")
+    log("[*] ARBUZIAN CS2 — External")
     mem = wait_for_process()
     offset = wait_for_offsets(mem)
 
     # === Инициализация модулей ===
+    log("[*] Инициализация модулей...")
     esp = ESP(mem, offset)
     aimbot = Aimbot(mem, offset)
     silent = SilentAim(mem, offset)
@@ -115,9 +123,12 @@ def main():
     spinbot = Spinbot(mem, offset)
     bhop = Bhop(mem, offset)
     rcs = RecoilControl(mem, offset)
-    overlay = Overlay()
 
-    # === Конфиг ===
+    # Создаем скрытое главное окно для Tkinter переменных (tk.BooleanVar и т.д.)
+    root = tk.Tk()
+    root.withdraw()
+
+    log("[*] Создание конфига...")
     config = {
         # ── AIMBOT ──
         "Silent Aim": tk.BooleanVar(value=False),
@@ -125,45 +136,34 @@ def main():
         "Silent FOV": ("slider", tk.DoubleVar(value=10.0), 1.0, 180.0),
         "Silent Hold (ms)": ("slider", tk.DoubleVar(value=18.0), 5.0, 50.0),
         "Silent Visibility": tk.BooleanVar(value=True),
-
         "Aimbot": tk.BooleanVar(value=False),
-        "Aimbot Key": ("combo", tk.StringVar(value="Always"),
-                        ["Always", "LMB", "RMB"]),
-        "Aimbot Hitbox": ("combo", tk.StringVar(value="Head"),
-                           ["Head", "Neck", "Chest", "Stomach"]),
+        "Aimbot Key": ("combo", tk.StringVar(value="Always"), ["Always", "LMB", "RMB"]),
+        "Aimbot Hitbox": ("combo", tk.StringVar(value="Head"), ["Head", "Neck", "Chest", "Stomach"]),
         "Aimbot FOV": ("slider", tk.DoubleVar(value=15.0), 1.0, 90.0),
         "Aimbot Smooth": ("slider", tk.DoubleVar(value=8.0), 1.0, 30.0),
         "Aimbot Humanize": ("slider", tk.DoubleVar(value=0.0), 0.0, 1.0),
-        "Aimbot Priority": ("combo", tk.StringVar(value="FOV"),
-                             ["FOV", "Distance", "Lowest HP"]),
+        "Aimbot Priority": ("combo", tk.StringVar(value="FOV"), ["FOV", "Distance", "Lowest HP"]),
         "Aimbot Visibility": tk.BooleanVar(value=True),
-
         "RCS Strength": ("slider", tk.DoubleVar(value=1.0), 0.0, 1.0),
         "RCS Start Bullet": ("slider", tk.DoubleVar(value=1), 1, 30),
         "Recoil Control": tk.BooleanVar(value=False),
         "RCS Smoothing": ("slider", tk.DoubleVar(value=1.5), 1.0, 5.0),
-
         "Triggerbot": tk.BooleanVar(value=False),
         "Trigger Delay (ms)": ("slider", tk.DoubleVar(value=50), 10, 500),
-
         # ── ANTI-AIM ──
         "Spinbot": tk.BooleanVar(value=False),
         "Spinbot Hotkey": tk.BooleanVar(value=True),
         "Spinbot Speed": ("slider", tk.DoubleVar(value=90.0), 10.0, 720.0),
-        "Spinbot Mode": ("combo", tk.StringVar(value="Spin"),
-                          ["Spin", "Jitter", "Random"]),
+        "Spinbot Mode": ("combo", tk.StringVar(value="Spin"), ["Spin", "Jitter", "Random"]),
         "Jitter Range": ("slider", tk.DoubleVar(value=60.0), 10.0, 180.0),
         "Desync": tk.BooleanVar(value=False),
-        "Desync Side": ("combo", tk.StringVar(value="Right"),
-                         ["Left", "Right", "Random"]),
-
+        "Desync Side": ("combo", tk.StringVar(value="Right"), ["Left", "Right", "Random"]),
         # ── MOVEMENT ──
         "Bhop": tk.BooleanVar(value=False),
         "Bhop Hitchance": ("slider", tk.DoubleVar(value=85), 10, 100),
         "Bhop Delay (ms)": ("slider", tk.DoubleVar(value=0), 0, 30),
         "Auto Strafe": tk.BooleanVar(value=False),
         "Auto Strafe Strength": ("slider", tk.DoubleVar(value=6.0), 1.0, 20.0),
-
         # ── VISUALS ──
         "ESP Box": tk.BooleanVar(value=True),
         "ESP Corner Box": tk.BooleanVar(value=False),
@@ -182,14 +182,20 @@ def main():
         "ESP Debug": tk.BooleanVar(value=True),
     }
 
-    # === ConfigManager — загрузка до создания меню ===
+    log("[*] Загрузка профиля...")
     cfg_mgr = ConfigManager(config, folder="configs", default_name="default")
     cfg_mgr.load()
 
-    # === Menu с привязкой к конфигу ===
+    log("[*] Инициализация оверлея...")
+    # ИСПРАВЛЕНИЕ: передаем cfg_mgr в Overlay
+    try:
+        overlay = Overlay(cfg_mgr)
+    except TypeError:
+        overlay = Overlay() # Откат на старую версию, если она не принимает аргументы
+
+    log("[*] Создание меню...")
     menu = Menu(overlay.root, config, config_manager=cfg_mgr)
 
-    # === Обработчик закрытия оверлея ===
     overlay.root.protocol("WM_DELETE_WINDOW", overlay.root.quit)
 
     insert_prev = [False]
@@ -197,20 +203,7 @@ def main():
     tick_count = [0]
 
     def tick(ov):
-        # ── Аварийный выход по END ──
-        if user32.GetAsyncKeyState(VK_END) & 0x8000:
-            print("\n[!] END pressed, exiting...")
-            ov.root.quit()
-            return
-
-        # ── FPS счётчик ──
-        now_t = time.time()
-        dt = now_t - fps_state["last"]
-        fps_state["last"] = now_t
-        if dt > 0:
-            fps_state["fps"] = 0.9 * fps_state["fps"] + 0.1 / dt
-
-        # ── INSERT → toggle menu ──
+        # === ОБРАБОТКА КЛАВИШИ INSERT ДЛЯ МЕНЮ ===
         state = user32.GetAsyncKeyState(VK_INSERT) & 0x8000 != 0
         if state and not insert_prev[0]:
             menu.toggle()
@@ -220,17 +213,21 @@ def main():
                 pass
         insert_prev[0] = state
 
-        # ── Периодически обновляем видимость подопций ──
-        tick_count[0] += 1
-        if tick_count[0] % 5 == 0:
-            try:
-                menu.refresh_visibility()
-            except Exception:
-                pass
+        # Проверка на выход по END
+        if user32.GetAsyncKeyState(VK_END) & 0x8000:
+            log("\n[!] END pressed, exiting...")
+            ov.root.quit()
+            return
+
+        now_t = time.time()
+
+        dt = now_t - fps_state["last"]
+        fps_state["last"] = now_t
+        if dt > 0:
+            fps_state["fps"] = 0.9 * fps_state["fps"] + 0.1 / dt
 
         fg_ok = is_game_foreground()
 
-        # === ESP ===
         esp.enable_no_flash = val(config, "No Flash")
         esp.skeleton_enabled = val(config, "ESP Skeleton")
         esp.enable_radar = val(config, "Radar Hack")
@@ -238,11 +235,14 @@ def main():
         try:
             esp.update()
         except Exception as e:
-            print(f"[!] ESP update error: {e}")
+            log(f"[!] ESP update error: {e}")
 
-        W, H = ov.width, ov.height
+        if hasattr(ov, 'width') and hasattr(ov, 'height'):
+            W, H = ov.width, ov.height
+        else:
+            W = ov.root.winfo_screenwidth()
+            H = ov.root.winfo_screenheight()
 
-        # === Aimbot params ===
         aimbot.set_screen_aspect(W, H)
         aimbot.fov = val(config, "Aimbot FOV")
         aimbot.smooth = max(1.0, val(config, "Aimbot Smooth"))
@@ -254,24 +254,20 @@ def main():
         aimbot.aim_key = val(config, "Aimbot Key")
         aimbot.target_priority = val(config, "Aimbot Priority")
 
-        # === FOV Circle ===
         if val(config, "FOV Circle"):
             r = int(aimbot.fov_radius_px(H))
             ov.circle(W // 2, H // 2, max(2, r), "#22c55e", 1)
 
-        # === Bomb ESP ===
         if val(config, "Bomb ESP") and esp.bomb:
             bs = esp.world_to_screen(*esp.bomb["pos"])
             if bs:
                 ov.circle(bs[0], bs[1], 22, "#ff4444", 2)
-                ov.text(bs[0], bs[1] - 26, "BOMB", "#ff4444", 11,
-                        anchor="s", bold=True)
+                ov.text(bs[0], bs[1] - 26, "BOMB", "#ff4444", 11, anchor="s", bold=True)
 
-        # === Player ESP ===
         draw = any(val(config, k) for k in (
-            "ESP Box", "ESP Corner Box", "ESP Skeleton", "ESP Health",
-            "ESP Name", "ESP Distance", "ESP Weapon", "ESP Tracer", "ESP Fill"))
-
+            "ESP Box", "ESP Corner Box", "ESP Skeleton", "ESP Health", "ESP Name",
+            "ESP Distance", "ESP Weapon", "ESP Tracer", "ESP Fill"
+        ))
         if draw:
             for e in esp.entities:
                 hs, fs = e["head_screen"], e["screen"]
@@ -282,39 +278,30 @@ def main():
                 bw = max(25, int(bh * 0.45))
                 cx = hs[0]
                 x1, x2 = cx - bw // 2, cx + bw // 2
-
                 base_col = team_color(e["team"])
                 visible = e.get("visible", True)
                 col = base_col if visible else darken_hex(base_col, 0.5)
 
                 if val(config, "ESP Fill"):
                     fill = "#3a2010" if e["team"] == 2 else "#10243a"
-                    ov.rect_fill(x1, y1, x2, y2,
-                                 fill if visible else darken_hex(fill, 0.55))
-
+                    ov.rect_fill(x1, y1, x2, y2, fill if visible else darken_hex(fill, 0.55))
                 if val(config, "ESP Corner Box"):
                     ov.corner_box(x1, y1, x2, y2, col, 2)
                 elif val(config, "ESP Box"):
                     ov.box(x1, y1, x2, y2, col, 2)
-
                 if val(config, "ESP Skeleton") and e["bone_screens"]:
                     bs = e["bone_screens"]
                     sk_col = col if visible else darken_hex(col, 0.55)
                     for a, b in BONE_CONNECTIONS:
                         if a in bs and b in bs:
                             ov.line(bs[a][0], bs[a][1], bs[b][0], bs[b][1], sk_col, 1)
-
                 if val(config, "ESP Health"):
                     hp_col = health_color(e["health"])
                     if not visible:
                         hp_col = darken_hex(hp_col, 0.6)
                     ov.health_bar(x1 - 7, y1, 4, bh, e["health"], hp_col)
-
                 if val(config, "ESP Name") and e["name"]:
-                    ov.text(cx, y1 - 12, e["name"],
-                            "#fff" if visible else "#888", 10,
-                            anchor="n", bold=True)
-
+                    ov.text(cx, y1 - 12, e["name"], "#fff" if visible else "#888", 10, anchor="n", bold=True)
                 parts = []
                 if val(config, "ESP Weapon") and e.get("weapon"):
                     parts.append(e["weapon"])
@@ -322,17 +309,13 @@ def main():
                     d = math.dist(e["pos"], esp.local_pos) * 0.0254
                     parts.append(f"{d:.0f}m")
                 if parts:
-                    ov.text(cx, y2 + 4, " | ".join(parts),
-                            "#ccc" if visible else "#666", 9, anchor="n")
-
+                    ov.text(cx, y2 + 4, " | ".join(parts), "#ccc" if visible else "#666", 9, anchor="n")
                 if val(config, "ESP Tracer"):
                     ov.line(W // 2, H, cx, (y1 + y2) // 2, col, 1)
 
-        # === Smooth Aimbot ===
         aimbot.enabled = val(config, "Aimbot")
         smooth_aimed = aimbot.update(esp.entities, esp.local_pawn, W, H)
 
-        # === Silent Aim ===
         silent_busy = silent.is_active()
         if val(config, "Silent Aim"):
             silent.use_360 = val(config, "360 Aim")
@@ -340,7 +323,6 @@ def main():
             silent.hold_s = val(config, "Silent Hold (ms)") / 1000.0
             silent.rcs_strength = val(config, "RCS Strength")
             silent.rcs_start_bullet = int(val(config, "RCS Start Bullet"))
-
             targets = []
             if silent.use_360:
                 cur_yaw, cur_pitch = read_view_angles(mem, offset)
@@ -355,13 +337,10 @@ def main():
                     horiz = math.hypot(dx_w, dy_w)
                     tgt_yaw = math.degrees(math.atan2(dy_w, dx_w)) % 360.0
                     tgt_pitch = -math.degrees(math.atan2(dz_w, horiz))
-
                     d_yaw = (tgt_yaw - cur_yaw + 180) % 360 - 180
                     d_pitch = tgt_pitch - cur_pitch
-
                     move_yaw = -d_yaw
                     move_pitch = d_pitch
-
                     dist = math.hypot(move_yaw, move_pitch)
                     if dist <= 180.0:
                         targets.append((move_yaw, move_pitch, dist))
@@ -373,7 +352,6 @@ def main():
                     yaw, pitch, dist = aimbot.angle_to(W, H, e["head_screen"])
                     if dist <= fov_limit:
                         targets.append((yaw, pitch, dist))
-
             sens = aimbot._sensitivity()
             punch = aimbot._get_punch(esp.local_pawn)
             shots = aimbot._shots_fired(esp.local_pawn)
@@ -381,20 +359,17 @@ def main():
         else:
             silent.publish([], 2.0, (0.0, 0.0), 0, False, fg_ok)
 
-        # === Standalone RCS ===
         if val(config, "Recoil Control") and not smooth_aimed and not silent_busy:
             rcs.smoothing = val(config, "RCS Smoothing")
             rcs.update(False)
         else:
             rcs.reset()
 
-        # === Triggerbot ===
         triggerbot.enabled = val(config, "Triggerbot") and fg_ok
         if triggerbot.enabled:
             triggerbot.delay = val(config, "Trigger Delay (ms)") / 1000.0
-        triggerbot.update(esp.local_team)
+            triggerbot.update(esp.local_team)
 
-        # === Anti-Aim ===
         spinbot_active = False
         if not silent_busy and not smooth_aimed:
             spin_hotkey = bool(user32.GetAsyncKeyState(VK_MOUSE4) & 0x8000)
@@ -406,18 +381,12 @@ def main():
                 spinbot.update(hotkey_held=(spin_hotkey if hotkey_mode else True))
                 spinbot_active = True
 
-        # === Bhop ===
         if val(config, "Bhop"):
             bhop.autostrafe_strength = val(config, "Auto Strafe Strength")
-            bhop.update(autostrafe=(val(config, "Auto Strafe")
-                                    and not smooth_aimed
-                                    and not silent_busy
-                                    and not spinbot_active))
+            bhop.update(autostrafe=(val(config, "Auto Strafe") and not smooth_aimed and not silent_busy and not spinbot_active))
 
-        # === Config autosave ===
         cfg_mgr.autosave(interval=1.5)
 
-        # === Debug ===
         if val(config, "ESP Debug"):
             status = f"{fps_state['fps']:.0f} fps | enemies {len(esp.entities)}"
             if silent_busy:
@@ -428,10 +397,51 @@ def main():
                 status += " | PAUSED"
             ov.text(10, 10, status, "#22c55e", 11, bold=True)
 
+    def tick_ui():
+        # UI-поток (Tk mainloop): только меню и хоткеи, без тяжёлой работы
+        try:
+            state = user32.GetAsyncKeyState(VK_INSERT) & 0x8000 != 0
+            if state and not insert_prev[0]:
+                menu.toggle()
+                try:
+                    menu.refresh_visibility()
+                except Exception:
+                    pass
+            insert_prev[0] = state
+
+            tick_count[0] += 1
+            if tick_count[0] % 3 == 0:
+                try:
+                    menu.refresh_visibility()
+                except Exception:
+                    pass
+        except Exception as e:
+            log(f"[!] UI tick error: {e}")
+        try:
+            overlay.root.after(50, tick_ui)
+        except Exception:
+            pass
+
+    # Запускаем цикл tick через Tkinter (работает и для старого, и для нового Overlay)
+    def tick_loop():
+        if hasattr(overlay, 'running') and not overlay.running:
+            return
+        
+        overlay.clear()
+        try:
+            tick(overlay)
+        except Exception as e:
+            log(f"[!] Tick error: {e}")
+            log(traceback.format_exc())
+            
+        overlay.root.after(16, tick_loop)
+
+    overlay.root.after(16, tick_loop)
+
     try:
-        overlay.run(tick, interval=16)
+        overlay.start()
     except KeyboardInterrupt:
-        print("\n[!] Exit")
+        log("\n[!] Exit")
     finally:
         try:
             cfg_mgr.save()
@@ -445,6 +455,10 @@ def main():
                 pass
         mem.close()
 
-
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        log(f"\n[!] КРИТИЧЕСКАЯ ОШИБКА: {e}")
+        log(traceback.format_exc())
+        input("Нажми Enter для выхода...")

@@ -2,6 +2,8 @@ import ctypes
 from ctypes import wintypes
 import tkinter as tk
 import customtkinter as ctk
+import os
+import subprocess
 
 ctk.set_appearance_mode("dark")
 
@@ -14,7 +16,6 @@ CARD_HOVER = "#152016"
 BORDER = "#1e2e20"
 TEXT = "#e8f5e8"
 SUBTEXT = "#7a8f7a"
-
 SIDEBAR_W = 140
 
 DESCRIPTIONS = {
@@ -62,30 +63,44 @@ DESCRIPTIONS = {
     "ESP Debug": {"en": "Stats on top-left", "ru": "Статистика слева"},
 }
 
+# ВОЗВРАЩЕНЫ ИКОНКИ
 TABS = {
-    "Aimbot": {"icon": "🎯", "sections": {
-        "SILENT AIM": {"parent": "Silent Aim", "items": ["Silent Aim", "360 Aim", "Silent FOV", "Silent Hold (ms)", "Silent Visibility"]},
-        "SMOOTH AIM": {"parent": "Aimbot", "items": ["Aimbot", "Aimbot Key", "Aimbot Hitbox", "Aimbot FOV", "Aimbot Smooth", "Aimbot Humanize", "Aimbot Priority", "Aimbot Visibility"]},
-        "RECOIL": {"parent": "Recoil Control", "items": ["Recoil Control", "RCS Smoothing", "RCS Strength", "RCS Start Bullet"]},
-        "TRIGGER": {"parent": "Triggerbot", "items": ["Triggerbot", "Trigger Delay (ms)"]},
-    }},
-    "Anti-Aim": {"icon": "💥", "sections": {
-        "SPINBOT": {"parent": "Spinbot", "items": ["Spinbot", "Spinbot Hotkey", "Spinbot Speed", "Spinbot Mode", "Jitter Range"]},
-        "DESYNC": {"parent": "Desync", "items": ["Desync", "Desync Side"]},
-    }},
-    "Movement": {"icon": "🦘", "sections": {
-        "BHOP": {"parent": "Bhop", "items": ["Bhop", "Bhop Hitchance", "Bhop Delay (ms)", "Auto Strafe", "Auto Strafe Strength"]},
-    }},
-    "Visuals": {"icon": "👁", "sections": {
-        "PLAYER ESP": {"parent": "ESP Box", "items": ["ESP Box", "ESP Corner Box", "ESP Skeleton", "ESP Health", "ESP Name", "ESP Distance", "ESP Weapon", "ESP Tracer", "ESP Fill"]},
-        "OTHER": {"parent": None, "items": ["Bomb ESP", "Glow ESP", "Radar Hack", "No Flash"]},
-        "OVERLAY": {"parent": None, "items": ["FOV Circle", "ESP Debug"]},
-    }},
+    "Aimbot": {
+        "icon": "🎯",
+        "sections": {
+            "SILENT AIM": {"parent": "Silent Aim", "items": ["Silent Aim", "360 Aim", "Silent FOV", "Silent Hold (ms)", "Silent Visibility"]},
+            "SMOOTH AIM": {"parent": "Aimbot", "items": ["Aimbot", "Aimbot Key", "Aimbot Hitbox", "Aimbot FOV", "Aimbot Smooth", "Aimbot Humanize", "Aimbot Priority", "Aimbot Visibility"]},
+            "RECOIL": {"parent": "Recoil Control", "items": ["Recoil Control", "RCS Smoothing", "RCS Strength", "RCS Start Bullet"]},
+            "TRIGGER": {"parent": "Triggerbot", "items": ["Triggerbot", "Trigger Delay (ms)"]},
+        },
+    },
+    "Anti-Aim": {
+        "icon": "🔄",
+        "sections": {
+            "SPINBOT": {"parent": "Spinbot", "items": ["Spinbot", "Spinbot Hotkey", "Spinbot Speed", "Spinbot Mode", "Jitter Range"]},
+            "DESYNC": {"parent": "Desync", "items": ["Desync", "Desync Side"]},
+        },
+    },
+    "Movement": {
+        "icon": "🏃",
+        "sections": {
+            "BHOP": {"parent": "Bhop", "items": ["Bhop", "Bhop Hitchance", "Bhop Delay (ms)", "Auto Strafe", "Auto Strafe Strength"]},
+        },
+    },
+    "Visuals": {
+        "icon": "👁",
+        "sections": {
+            "PLAYER ESP": {"parent": "ESP Box", "items": ["ESP Box", "ESP Corner Box", "ESP Skeleton", "ESP Health", "ESP Name", "ESP Distance", "ESP Weapon", "ESP Tracer", "ESP Fill"]},
+            "OTHER": {"parent": None, "items": ["Bomb ESP", "Glow ESP", "Radar Hack", "No Flash"]},
+            "OVERLAY": {"parent": None, "items": ["FOV Circle", "ESP Debug"]},
+        },
+    },
 }
 
 
 class Tooltip:
     _current = None
+
     def __init__(self, widget, get_text, delay=350):
         self.widget = widget
         self.get_text = get_text
@@ -108,22 +123,27 @@ class Tooltip:
     def _show(self):
         self._hide()
         text = self.get_text()
-        if not text: return
+        if not text:
+            return
         x = self.widget.winfo_rootx() + 20
         y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
         self._top = tk.Toplevel(self.widget)
         self._top.wm_overrideredirect(True)
         self._top.wm_attributes("-topmost", True)
         self._top.geometry(f"+{x}+{y}")
-        tk.Label(self._top, text=text, justify="left", bg="#0f1a10", fg="#e8f5e8",
-                 font=("Segoe UI", 10), padx=10, pady=6, wraplength=280,
-                 bd=1, relief="solid").pack()
+        tk.Label(
+            self._top, text=text, justify="left", bg="#0f1a10", fg="#e8f5e8",
+            font=("Segoe UI", 10), padx=10, pady=6, wraplength=280,
+            bd=1, relief="solid",
+        ).pack()
         Tooltip._current = self._top
 
     def _hide(self):
         if self._top:
-            try: self._top.destroy()
-            except: pass
+            try:
+                self._top.destroy()
+            except Exception:
+                pass
             self._top = None
             Tooltip._current = None
 
@@ -146,7 +166,7 @@ class Menu:
         self._animating = False
         self._visible = False
         self._current_cat = list(TABS.keys())[0]
-        self._children_frames = {} # parent_key -> container_frame
+        self._children_frames = {}
 
         self._build()
         self.root.update_idletasks()
@@ -162,8 +182,10 @@ class Menu:
                 try:
                     v = ctypes.c_int(value)
                     dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), ctypes.c_int(attr), ctypes.byref(v), ctypes.sizeof(v))
-                except: pass
-        except: pass
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def _t(self, key):
         d = DESCRIPTIONS.get(key)
@@ -174,7 +196,8 @@ class Menu:
         self.root.attributes("-alpha", max(0.0, min(1.0, alpha)))
 
     def _animate_in(self):
-        if self._animating: return
+        if self._animating:
+            return
         self._animating = True
         self._set_geom(self.START_Y + self.SLIDE_PX, 0.0)
         self.root.deiconify()
@@ -190,7 +213,8 @@ class Menu:
         self.root.after(14, lambda: self._anim_in_tick(t))
 
     def _animate_out(self):
-        if self._animating: return
+        if self._animating:
+            return
         self._animating = True
         self._anim_out_tick(1.0)
 
@@ -207,18 +231,33 @@ class Menu:
     def _build(self):
         header = ctk.CTkFrame(self.root, fg_color="transparent", height=48)
         header.pack(fill="x", padx=18, pady=(14, 0))
-        ctk.CTkLabel(header, text="🍉 ARBUZIAN", font=ctk.CTkFont("Segoe UI Emoji", 20, "bold"), text_color=ACCENT).pack(side="left")
+        ctk.CTkLabel(header, text=" ARBUZIAN", font=ctk.CTkFont("Segoe UI Emoji", 20, "bold"), text_color=ACCENT).pack(side="left")
         ctk.CTkLabel(header, text="CS2 // HvH", font=ctk.CTkFont("Segoe UI", 10), text_color=SUBTEXT).pack(side="left", padx=(10, 0))
         ctk.CTkLabel(header, text="INSERT", font=ctk.CTkFont("Segoe UI", 9, "bold"), text_color=SUBTEXT).pack(side="right")
 
         footer = ctk.CTkFrame(self.root, fg_color="transparent", height=42)
         footer.pack(fill="x", side="bottom", padx=14, pady=(0, 12))
 
-        ctk.CTkSegmentedButton(footer, values=["EN", "RU"], command=lambda v: self.lang.set(v.lower()),
-                               selected_color=ACCENT_DIM, unselected_color=CARD, text_color=TEXT, height=28).pack(side="right", padx=(8, 0))
+        # --- Кнопка открытия логов ---
+        self.logs_btn = ctk.CTkButton(
+            footer, text="📄 LOGS", width=70, height=28,
+            fg_color=CARD, hover_color=ACCENT_DIM,
+            text_color=TEXT, command=self.open_logs
+        )
+        self.logs_btn.pack(side="left", padx=(0, 8))
 
-        self._config_combo = ctk.CTkOptionMenu(footer, values=self._profile_names(), command=self._on_profile_switch,
-                                               fg_color=CARD, button_color=ACCENT_DIM, button_hover_color=ACCENT, width=140, height=28)
+        ctk.CTkSegmentedButton(
+            footer, values=["EN", "RU"],
+            command=lambda v: self.lang.set(v.lower()),
+            selected_color=ACCENT_DIM, unselected_color=CARD,
+            text_color=TEXT, height=28,
+        ).pack(side="right", padx=(8, 0))
+
+        self._config_combo = ctk.CTkOptionMenu(
+            footer, values=self._profile_names(), command=self._on_profile_switch,
+            fg_color=CARD, button_color=ACCENT_DIM, button_hover_color=ACCENT,
+            width=140, height=28,
+        )
         self._config_combo.pack(side="right", padx=4)
 
         ctk.CTkButton(footer, text="💾", width=34, height=28, fg_color=CARD, hover_color=ACCENT_DIM, command=self._on_save).pack(side="right", padx=4)
@@ -233,9 +272,13 @@ class Menu:
 
         self.cat_buttons = {}
         for cat_name, info in TABS.items():
-            btn = ctk.CTkButton(sidebar, text=f"{info['icon']}   {cat_name}", font=ctk.CTkFont("Segoe UI", 13, "bold"), anchor="w",
-                                fg_color="transparent", hover_color=CARD_HOVER, text_color=TEXT, height=40, corner_radius=8,
-                                command=lambda c=cat_name: self._switch_category(c))
+            btn = ctk.CTkButton(
+                sidebar, text=f"{info['icon']} {cat_name}",
+                font=ctk.CTkFont("Segoe UI", 13, "bold"), anchor="w",
+                fg_color="transparent", hover_color=CARD_HOVER, text_color=TEXT,
+                height=40, corner_radius=8,
+                command=lambda c=cat_name: self._switch_category(c),
+            )
             btn.pack(fill="x", padx=8, pady=(8, 2))
             self.cat_buttons[cat_name] = btn
 
@@ -244,7 +287,11 @@ class Menu:
 
         self.cat_frames = {}
         for cat_name, info in TABS.items():
-            scroll = ctk.CTkScrollableFrame(self.content, fg_color=CARD, corner_radius=10, border_width=1, border_color=BORDER, scrollbar_button_color="#1e2e20")
+            scroll = ctk.CTkScrollableFrame(
+                self.content, fg_color=CARD, corner_radius=10,
+                border_width=1, border_color=BORDER,
+                scrollbar_button_color="#1e2e20",
+            )
             self._fill_category(scroll, info["sections"])
             self.cat_frames[cat_name] = scroll
 
@@ -252,84 +299,123 @@ class Menu:
         self.refresh_visibility()
 
     def _profile_names(self):
-        if not self.cfg_mgr: return ["default"]
-        names = self.cfg_mgr.list_profiles() or ["default"]
+        if not self.cfg_mgr:
+            return ["default"]
+        names = self.cfg_mgr.get_profiles() or ["default"]
         if self.cfg_mgr.current_name not in names:
             names.insert(0, self.cfg_mgr.current_name)
         return names
 
     def _on_profile_switch(self, name):
-        if not self.cfg_mgr: return
+        if not self.cfg_mgr:
+            return
         self.cfg_mgr.set_profile(name)
         self.cfg_mgr.load()
         self.refresh_visibility()
 
     def _on_save(self):
-        if self.cfg_mgr: self.cfg_mgr.save()
+        if self.cfg_mgr:
+            self.cfg_mgr.save()
 
     def _on_new_profile(self):
-        if not self.cfg_mgr: return
+        if not self.cfg_mgr:
+            return
         dlg = ctk.CTkInputDialog(text="Profile name:", title="New Config")
         name = dlg.get_input()
-        if not name: return
+        if not name:
+            return
         self.cfg_mgr.set_profile(name.strip())
         self.cfg_mgr.save()
         self._config_combo.configure(values=self._profile_names())
         self._config_combo.set(self.cfg_mgr.current_name)
 
+    def open_logs(self):
+        log_path = os.path.abspath("logs.txt")
+        if not os.path.exists(log_path):
+            with open(log_path, "w", encoding="utf-8") as f:
+                f.write("[INFO] Логи инициализированы.\n")
+        try:
+            subprocess.Popen(["notepad.exe", log_path])
+        except Exception as e:
+            print(f"Не удалось открыть логи: {e}")
+
     def _switch_category(self, cat_name):
         self._current_cat = cat_name
         for name, frame in self.cat_frames.items():
-            if name == cat_name: frame.pack(fill="both", expand=True)
-            else: frame.pack_forget()
+            if name == cat_name:
+                frame.pack(fill="both", expand=True)
+            else:
+                frame.pack_forget()
         for name, btn in self.cat_buttons.items():
-            btn.configure(fg_color=ACCENT_DIM if name == cat_name else "transparent", text_color=ACCENT if name == cat_name else TEXT)
+            btn.configure(
+                fg_color=ACCENT_DIM if name == cat_name else "transparent",
+                text_color=ACCENT if name == cat_name else TEXT,
+            )
 
     def _fill_category(self, parent, sections):
         for section_name, info in sections.items():
             parent_key = info.get("parent")
             items = info.get("items", [])
-            if not items: continue
+            if not items:
+                continue
 
-            ctk.CTkLabel(parent, text=section_name, font=ctk.CTkFont("Segoe UI", 10, "bold"), text_color=SUBTEXT, anchor="w").pack(fill="x", padx=14, pady=(14, 6))
+            ctk.CTkLabel(
+                parent, text=section_name,
+                font=ctk.CTkFont("Segoe UI", 10, "bold"),
+                text_color=SUBTEXT, anchor="w",
+            ).pack(fill="x", padx=14, pady=(14, 6))
 
             child_container = None
+            parent_card = None
+
             for idx, key in enumerate(items):
-                if key not in self.config: continue
+                if key not in self.config:
+                    continue
                 v = self.config[key]
                 is_parent_item = (parent_key and key == parent_key)
-                
+
+                target_parent = parent
+                if parent_key and not is_parent_item and child_container is not None:
+                    target_parent = child_container
+
                 if isinstance(v, tuple) and v[0] == "slider":
-                    card = self._slider(parent, key, v)
+                    card = self._slider(target_parent, key, v)
                 elif isinstance(v, tuple) and v[0] == "combo":
-                    card = self._combo(parent, key, v)
+                    card = self._combo(target_parent, key, v)
                 elif hasattr(v, "get"):
-                    card = self._switch(parent, key, v)
-                else: continue
+                    card = self._switch(target_parent, key, v)
+                else:
+                    continue
 
                 if is_parent_item:
-                    # Родительский тумблер пакуется в основной скролл
                     card.pack(fill="x", padx=10, pady=3)
-                    # Создаем контейнер для дочерних элементов сразу под ним
+                    parent_card = card
                     child_container = ctk.CTkFrame(parent, fg_color="transparent")
-                    child_container.pack(fill="x")
-                    self._children_frames[parent_key] = child_container
-                elif parent_key and child_container is not None:
-                    # Дочерние элементы пакуются ВНУТРЬ контейнера
-                    card.pack(in_=child_container, fill="x", padx=10, pady=3)
+                    # Запоминаем контейнер и родительскую карточку
+                    self._children_frames[parent_key] = (child_container, parent_card)
                 else:
-                    # Одиночные элементы (без родителя)
                     card.pack(fill="x", padx=10, pady=3)
 
     def _attach_tooltip(self, widget, key):
-        if widget is not None: Tooltip(widget, lambda k=key: self._t(k))
+        if widget is not None:
+            Tooltip(widget, lambda k=key: self._t(k))
 
     def _switch(self, parent, label, var):
         card = ctk.CTkFrame(parent, fg_color="#0c1410", corner_radius=8)
-        sw = ctk.CTkSwitch(card, text=label, variable=var, font=ctk.CTkFont("Segoe UI", 12),
-                           progress_color=ACCENT, button_color="#2a3a2a", button_hover_color="#4a5a4a", text_color=TEXT)
+        
+        # Желтая пометка для функций, которым лучше работать в Internal
+        display_label = label
+        if label in ["Silent Aim", "No Flash", "Radar Hack", "Glow ESP", "Bhop", "Spinbot", "Desync", "Aimbot",]:
+            display_label = f"⚠️ {label}"
+
+        sw = ctk.CTkSwitch(
+            card, text=display_label, variable=var,
+            font=ctk.CTkFont("Segoe UI", 12),
+            progress_color=ACCENT, button_color="#2a3a2a",
+            button_hover_color="#4a5a4a", text_color=TEXT,
+        )
         sw.pack(fill="x", padx=12, pady=8)
-        self._attach_tooltip(sw, label)
+        self._attach_tooltip(sw, label) # В тултип передаем оригинальное название
         return card
 
     def _slider(self, parent, label, tup):
@@ -342,8 +428,14 @@ class Menu:
         val_lbl = ctk.CTkLabel(top, text=f"{var.get():.1f}", font=ctk.CTkFont("Segoe UI", 11, "bold"), text_color=ACCENT)
         val_lbl.pack(side="right")
 
-        def on_change(v): val_lbl.configure(text=f"{float(v):.1f}")
-        sl = ctk.CTkSlider(card, from_=from_, to=to, variable=var, command=on_change, progress_color=ACCENT, button_color=ACCENT, button_hover_color=ACCENT_HOVER, fg_color="#1a2a1a")
+        def on_change(v):
+            val_lbl.configure(text=f"{float(v):.1f}")
+
+        sl = ctk.CTkSlider(
+            card, from_=from_, to=to, variable=var, command=on_change,
+            progress_color=ACCENT, button_color=ACCENT,
+            button_hover_color=ACCENT_HOVER, fg_color="#1a2a1a",
+        )
         sl.pack(fill="x", padx=12, pady=(4, 10))
         self._attach_tooltip(sl, label)
         self._attach_tooltip(lbl, label)
@@ -354,32 +446,48 @@ class Menu:
         card = ctk.CTkFrame(parent, fg_color="#0c1410", corner_radius=8)
         lbl = ctk.CTkLabel(card, text=label, font=ctk.CTkFont("Segoe UI", 11), text_color=TEXT)
         lbl.pack(anchor="w", padx=12, pady=(8, 0))
-        combo = ctk.CTkOptionMenu(card, values=values, variable=var, fg_color="#1a2a1a", button_color="#2a3a2a", button_hover_color=ACCENT, dropdown_fg_color="#0f1a10", text_color=TEXT)
+        combo = ctk.CTkOptionMenu(
+            card, values=values, variable=var,
+            fg_color="#1a2a1a", button_color="#2a3a2a",
+            button_hover_color=ACCENT, dropdown_fg_color="#0f1a10",
+            text_color=TEXT,
+        )
         combo.pack(fill="x", padx=12, pady=(4, 10))
         self._attach_tooltip(combo, label)
         self._attach_tooltip(lbl, label)
         return card
 
     def refresh_visibility(self):
-        for parent_key, container in self._children_frames.items():
-            if parent_key not in self.config: continue
-            try: is_on = bool(self.config[parent_key].get())
-            except: is_on = True
+        for parent_key, (container, parent_card) in self._children_frames.items():
+            if parent_key not in self.config:
+                continue
+            try:
+                is_on = bool(self.config[parent_key].get())
+            except Exception:
+                is_on = True
 
-            if is_on: container.pack(fill="x")
-            else: container.pack_forget()
+            # Если включено — принудительно пакуем с отступом (after=parent_card)
+            # Если выключено — прячем контейнер целиком
+            if is_on:
+                container.pack(fill="x", padx=(30, 10), pady=(0, 5), after=parent_card)
+            else:
+                container.pack_forget()
 
     def show(self):
-        if self._visible or self._animating: return
+        if self._visible or self._animating:
+            return
         self._visible = True
         self.refresh_visibility()
         self._animate_in()
 
     def hide(self):
-        if not self._visible or self._animating: return
+        if not self._visible or self._animating:
+            return
         self._visible = False
         self._animate_out()
 
     def toggle(self):
-        if self._visible: self.hide()
-        else: self.show()
+        if self._visible:
+            self.hide()
+        else:
+            self.show()
