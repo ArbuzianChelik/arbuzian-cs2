@@ -23,6 +23,61 @@ VK_END = 0x23
 VK_LBUTTON = 0x01
 VK_MOUSE4 = 0x05
 
+# ================= ЛОГИРОВАНИЕ (должно быть до импорта модулей) =================
+LOG_FILE = "logs.txt"
+
+class _Tee:
+    """Дублирует весь stdout/stderr в файл с таймстампом по строкам."""
+    def __init__(self, real, path):
+        self._real = real
+        self._path = path
+        self._buf = ""
+
+    def _emit(self, line):
+        ts = time.strftime('%H:%M:%S')
+        stamped = f"[{ts}] {line}"
+        try:
+            self._real.write(stamped)
+        except Exception:
+            pass
+        try:
+            with open(self._path, "a", encoding="utf-8") as f:
+                f.write(stamped)
+        except Exception:
+            pass
+
+    def write(self, s):
+        if not s:
+            return
+        self._buf += s
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            self._emit(line + "\n")
+
+    def flush(self):
+        if self._buf:
+            self._emit(self._buf)
+            self._buf = ""
+        try:
+            self._real.flush()
+        except Exception:
+            pass
+
+    def isatty(self):
+        return False
+
+
+def _install_tee():
+    """Ставим Tee один раз. Повторный вызов безопасен."""
+    if isinstance(sys.stdout, _Tee):
+        return
+    sys.stdout = _Tee(sys.__stdout__, LOG_FILE)
+    sys.stderr = _Tee(sys.__stderr__, LOG_FILE)
+
+
+_install_tee()
+# ==============================================================================
+
 from memory import Memory, is_game_foreground
 from offsets import GetOffsets
 from esp import ESP, BONE_CONNECTIONS
@@ -36,29 +91,25 @@ from menu import Menu
 from silent_aim import SilentAim
 from config_manager import ConfigManager
 
-# ================= ЛОГИРОВАНИЕ =================
-LOG_FILE = "logs.txt"
 
 def log(msg):
+    """Просто print — TeeWriter добавит таймстамп и запишет в logs.txt."""
     print(msg)
-    try:
-        with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
-    except Exception:
-        pass
 
-# ================================================
 
 def val(cfg, key):
     v = cfg[key]
     return v[1].get() if isinstance(v, tuple) else v.get()
 
+
 def health_color(hp):
     p = max(0.0, min(1.0, hp / 100.0))
     return f"#{int(255 * min(1.0, 2 - 2 * p)):02X}{int(255 * min(1.0, 2 * p)):02X}50"
 
+
 def team_color(team):
     return {2: "#ffb84d", 3: "#4a9eff"}.get(team, "#cccccc")
+
 
 def darken_hex(hex_color, factor=0.5):
     h = hex_color.lstrip("#")
@@ -71,6 +122,7 @@ def darken_hex(hex_color, factor=0.5):
     except ValueError:
         return hex_color
     return f"#{int(r*factor):02X}{int(g*factor):02X}{int(b*factor):02X}"
+
 
 def read_view_angles(mem, offset):
     try:
@@ -87,6 +139,7 @@ def read_view_angles(mem, offset):
     except OSError:
         return (0.0, 0.0)
 
+
 def wait_for_process(name="cs2.exe", delay=2.0):
     log(f"[*] Ожидание {name}...")
     while True:
@@ -96,6 +149,7 @@ def wait_for_process(name="cs2.exe", delay=2.0):
             return mem
         except RuntimeError:
             time.sleep(delay)
+
 
 def wait_for_offsets(mem, delay=1.0):
     log("[*] Оффсеты...")
@@ -108,10 +162,25 @@ def wait_for_offsets(mem, delay=1.0):
             log(f"[!] {e}, retry...")
             time.sleep(delay)
 
+
+def _dump_offsets(offset):
+    """Пишет в лог ключевые оффсеты — полезно при диагностике."""
+    for name in ("dwEntityList", "dwLocalPlayerPawn", "dwLocalPlayerController",
+                 "dwViewMatrix", "dwViewAngles", "dwPlantedC4"):
+        v = getattr(offset, name, None)
+        if v is not None:
+            log(f"[*] offset {name} = 0x{v:X}" if isinstance(v, int) else f"[*] offset {name} = {v!r}")
+
+
 def main():
+    log("=" * 60)
     log("[*] ARBUZIAN CS2 — External")
+    log(f"[*] Python {sys.version.split()[0]}, cwd={os.getcwd()}")
+    log("=" * 60)
+
     mem = wait_for_process()
     offset = wait_for_offsets(mem)
+    _dump_offsets(offset)
 
     # === Инициализация модулей ===
     log("[*] Инициализация модулей...")
@@ -124,7 +193,7 @@ def main():
     bhop = Bhop(mem, offset)
     rcs = RecoilControl(mem, offset)
 
-    # Создаем скрытое главное окно для Tkinter переменных (tk.BooleanVar и т.д.)
+    # Создаем скрытое главное окно для Tkinter переменных
     root = tk.Tk()
     root.withdraw()
 
@@ -187,11 +256,10 @@ def main():
     cfg_mgr.load()
 
     log("[*] Инициализация оверлея...")
-    # ИСПРАВЛЕНИЕ: передаем cfg_mgr в Overlay
     try:
         overlay = Overlay(cfg_mgr)
     except TypeError:
-        overlay = Overlay() # Откат на старую версию, если она не принимает аргументы
+        overlay = Overlay()
 
     log("[*] Создание меню...")
     menu = Menu(overlay.root, config, config_manager=cfg_mgr)
@@ -201,32 +269,38 @@ def main():
     insert_prev = [False]
     fps_state = {"last": time.time(), "fps": 60.0}
     tick_count = [0]
+    diag_count = [0]
+    prev_fg = [None]
+    prev_ent_count = [None]
 
     def tick(ov):
-        # === ОБРАБОТКА КЛАВИШИ INSERT ДЛЯ МЕНЮ ===
+        # === INSERT ===
         state = user32.GetAsyncKeyState(VK_INSERT) & 0x8000 != 0
         if state and not insert_prev[0]:
             menu.toggle()
+            log("[*] Menu toggled (INSERT)")
             try:
                 menu.refresh_visibility()
             except Exception:
                 pass
         insert_prev[0] = state
 
-        # Проверка на выход по END
+        # === END ===
         if user32.GetAsyncKeyState(VK_END) & 0x8000:
-            log("\n[!] END pressed, exiting...")
+            log("[!] END pressed, exiting...")
             ov.root.quit()
             return
 
         now_t = time.time()
-
         dt = now_t - fps_state["last"]
         fps_state["last"] = now_t
         if dt > 0:
             fps_state["fps"] = 0.9 * fps_state["fps"] + 0.1 / dt
 
         fg_ok = is_game_foreground()
+        if prev_fg[0] is None or prev_fg[0] != fg_ok:
+            log(f"[*] foreground changed: {prev_fg[0]} -> {fg_ok}")
+            prev_fg[0] = fg_ok
 
         esp.enable_no_flash = val(config, "No Flash")
         esp.skeleton_enabled = val(config, "ESP Skeleton")
@@ -236,6 +310,7 @@ def main():
             esp.update()
         except Exception as e:
             log(f"[!] ESP update error: {e}")
+            log(traceback.format_exc())
 
         if hasattr(ov, 'width') and hasattr(ov, 'height'):
             W, H = ov.width, ov.height
@@ -243,6 +318,38 @@ def main():
             W = ov.root.winfo_screenwidth()
             H = ov.root.winfo_screenheight()
 
+        # Смена количества сущностей — логируем всегда
+        cur_count = len(esp.entities)
+        if prev_ent_count[0] != cur_count:
+            log(f"[*] entities: {prev_ent_count[0]} -> {cur_count}")
+            prev_ent_count[0] = cur_count
+
+        # Диагностика раз в ~секунду
+        diag_count[0] += 1
+        if diag_count[0] % 60 == 0:
+            log(f"[diag] fg={fg_ok} pawn={'Y' if esp.local_pawn else 'N'} "
+                f"entities={cur_count} bomb={'Y' if esp.bomb else 'N'} "
+                f"W={W} H={H} fps={fps_state['fps']:.0f}")
+            # Детально по ESP: адрес списка, структура, первая сущность
+            try:
+                el_off = getattr(offset, "dwEntityList", None)
+                if el_off is not None:
+                    el_ptr = mem.read_pointer(mem.client_base + el_off)
+                    log(f"[diag/esp] dwEntityList@0x{el_off:X} -> el_ptr=0x{el_ptr:X}")
+                struct = getattr(esp, "_struct", "<no attr>")
+                log(f"[diag/esp] struct={struct}")
+                if cur_count > 0:
+                    e0 = esp.entities[0]
+                    log(f"[diag/esp] first: team={e0.get('team')} "
+                        f"hp={e0.get('health')} pos={e0.get('pos')} "
+                        f"weapon={e0.get('weapon')!r} vis={e0.get('visible')}")
+                else:
+                    log("[diag/esp] entities empty — check esp._detect_structure() "
+                        "and offsets dwEntityList")
+            except Exception as ex:
+                log(f"[diag/esp] error: {ex}")
+
+        # ── AIMBOT ──
         aimbot.set_screen_aspect(W, H)
         aimbot.fov = val(config, "Aimbot FOV")
         aimbot.smooth = max(1.0, val(config, "Aimbot Smooth"))
@@ -389,16 +496,16 @@ def main():
 
         if val(config, "ESP Debug"):
             status = f"{fps_state['fps']:.0f} fps | enemies {len(esp.entities)}"
+            status += f" | pawn {'Y' if esp.local_pawn else 'N'}"
+            status += f" | fg {'Y' if fg_ok else 'N'}"
+            status += f" | {W}x{H}"
             if silent_busy:
                 status += f" | SILENT x{silent.snaps}"
             if smooth_aimed:
                 status += " | AIM"
-            if not fg_ok:
-                status += " | PAUSED"
             ov.text(10, 10, status, "#22c55e", 11, bold=True)
 
     def tick_ui():
-        # UI-поток (Tk mainloop): только меню и хоткеи, без тяжёлой работы
         try:
             state = user32.GetAsyncKeyState(VK_INSERT) & 0x8000 != 0
             if state and not insert_prev[0]:
@@ -422,27 +529,43 @@ def main():
         except Exception:
             pass
 
-    # Запускаем цикл tick через Tkinter (работает и для старого, и для нового Overlay)
+    def _overlay_alive():
+        try:
+            return overlay.root.winfo_exists() != 0
+        except Exception:
+            return False
+
     def tick_loop():
-        if hasattr(overlay, 'running') and not overlay.running:
+        if not _overlay_alive():
+            log("[*] Overlay window closed, tick loop stopped")
             return
-        
-        overlay.clear()
+        try:
+            overlay.clear()
+        except Exception as e:
+            log(f"[!] Clear error: {e}")
+            log(traceback.format_exc())
         try:
             tick(overlay)
         except Exception as e:
             log(f"[!] Tick error: {e}")
             log(traceback.format_exc())
-            
-        overlay.root.after(16, tick_loop)
+        if not _overlay_alive():
+            log("[*] Overlay window closed, tick loop stopped")
+            return
+        try:
+            overlay.root.after(16, tick_loop)
+        except Exception:
+            pass
 
+    log("[*] Запуск tick loop и mainloop...")
     overlay.root.after(16, tick_loop)
 
     try:
         overlay.start()
     except KeyboardInterrupt:
-        log("\n[!] Exit")
+        log("[!] KeyboardInterrupt")
     finally:
+        log("[*] Завершение сессии...")
         try:
             cfg_mgr.save()
         except Exception:
@@ -454,6 +577,13 @@ def main():
             except Exception:
                 pass
         mem.close()
+        # Финальный flush, чтобы последние строки точно попали в файл
+        try:
+            sys.stdout.flush()
+        except Exception:
+            pass
+        log("[*] Done.")
+
 
 if __name__ == "__main__":
     try:

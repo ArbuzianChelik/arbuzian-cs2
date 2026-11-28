@@ -334,6 +334,15 @@ class ESP:
     # ─────────────────────────── main update ───────────────────────────
 
     def update(self):
+        if self._struct is None:
+            # повторная попытка детекта (не чаще раза в ~2 секунды)
+            now = time.time()
+            if now - getattr(self, "_last_detect_try", 0) > 2.0:
+                self._last_detect_try = now
+                el_ptr = self.mem.read_pointer(self.mem.client_base + self.offset.dwEntityList)
+                if el_ptr:
+                    print(f"[ESP] retry detect, el_ptr=0x{el_ptr:X}")
+                    self._struct = self._detect_structure(el_ptr)
         try:
             self._read_view_matrix()
         except OSError:
